@@ -476,6 +476,60 @@ async def get_available_models():
     }
 
 
+class ToolInfo(BaseModel):
+    """Tool information."""
+
+    name: str
+    description: str
+    category: str
+
+
+class ToolsResponse(BaseModel):
+    """Available tools response."""
+
+    tools: List[ToolInfo]
+    count: int
+
+
+@app.get("/tools", response_model=ToolsResponse)
+async def get_available_tools():
+    """Get available Upsonic tools."""
+    tools = [
+        ToolInfo(
+            name="web_search",
+            description="Web arama yap (DuckDuckGo)",
+            category="web_search",
+        ),
+        ToolInfo(
+            name="code_execution",
+            description="Python kodu çalıştır",
+            category="execution",
+        ),
+        ToolInfo(
+            name="url_context",
+            description="URL içerik çek",
+            category="web",
+        ),
+        ToolInfo(
+            name="yfinance",
+            description="Finansal veriler (Yahoo Finance)",
+            category="financial",
+        ),
+        ToolInfo(
+            name="tavily",
+            description="Web arama (Tavily API)",
+            category="web_search",
+        ),
+        ToolInfo(
+            name="duckduckgo",
+            description="Web arama (DuckDuckGo)",
+            category="web_search",
+        ),
+    ]
+
+    return ToolsResponse(tools=tools, count=len(tools))
+
+
 # ============== WEBSOCKET (Real-time Chat) ==============
 
 

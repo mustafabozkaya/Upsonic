@@ -89,11 +89,26 @@ async def fetch_available_models():
         return False, [], "error"
 
 
-def get_models_sync():
-    """Get models synchronously."""
+async def fetch_available_tools():
+    """Fetch available tools from Gateway API."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{API_BASE_URL}/tools")
+
+            if response.status_code == 200:
+                data = response.json()
+                return True, data.get("tools", [])
+            else:
+                return False, []
+    except Exception as e:
+        return False, []
+
+
+def get_tools_sync():
+    """Get tools synchronously."""
 
     async def run_fetch():
-        return await fetch_available_models()
+        return await fetch_available_tools()
 
     return asyncio.run(run_fetch())
 
@@ -193,6 +208,42 @@ def render_sidebar():
         st.session_state.message_count = 0
         st.session_state.total_cost = 0
         st.rerun()
+
+    # Tool Selection Panel
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔧 Tool Seçimi")
+
+    if "available_tools" not in st.session_state:
+        with st.sidebar:
+            with st.spinner("Tool'lar yükleniyor..."):
+                success, tools = get_tools_sync()
+                st.session_state.available_tools = tools
+                if success:
+                    st.success(f"✅ {len(tools)} tool yüklendi")
+                else:
+                    st.warning("⚠️ Tool'lar alınamadı")
+
+    available_tools = st.session_state.get("available_tools", [])
+    enabled_tools = []
+
+    if available_tools:
+        st.sidebar.markdown("**🔍 Web Arama**")
+        for tool in available_tools:
+            if tool.get("category") == "web_search":
+                key = f"tool_{tool['name']}"
+                if st.sidebar.checkbox(tool["name"], value=True, key=key):
+                    enabled_tools.append(tool["name"])
+
+        st.sidebar.markdown("**📊 Veri & Analiz**")
+        for tool in available_tools:
+            if tool.get("category") in ["financial", "execution"]:
+                key = f"tool_{tool['name']}"
+                if st.sidebar.checkbox(tool["name"], value=False, key=key):
+                    enabled_tools.append(tool["name"])
+    else:
+        st.sidebar.caption("Tool'lar yüklenemedi")
+
+    st.session_state.enabled_tools = enabled_tools
 
     return user_id, session_id, model
 
