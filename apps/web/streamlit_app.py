@@ -41,13 +41,13 @@ st.set_page_config(
 )
 
 API_BASE_URL = os.environ.get("UPSONIC_API_URL", "http://localhost:8000")
-DEFAULT_MODEL = os.environ.get("UPSONIC_DEFAULT_MODEL", "ollama/qwen2.5:7b")
+DEFAULT_MODEL = os.environ.get("UPSONIC_DEFAULT_MODEL", "ollama/llama3.2:1b")
 
 DEFAULT_MODELS = [
-    "ollama/qwen2.5:7b",
-    "ollama/llama3.2:3b",
-    "ollama/llama3.2:1b",
-    "ollama/gemma3:4b",
+    "ollama/phi",  # ~2GB - Smaller model
+    "ollama/llama3.2:1b",  # ~1.3GB - Smallest Llama
+    "ollama/llama3.2:3b",  # ~2GB
+    "ollama/qwen2.5:7b",  # ~4.7GB - Needs more RAM
 ]
 
 if "messages" not in st.session_state:

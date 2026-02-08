@@ -42,7 +42,7 @@ from apps.gateway.safety import SafetyChecker, get_safety_checker, SafetyCheckRe
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "api-key-not-set")
-DEFAULT_MODEL = os.environ.get("UPSONIC_DEFAULT_MODEL", "ollama/qwen2.5:7b")
+DEFAULT_MODEL = os.environ.get("UPSONIC_DEFAULT_MODEL", "ollama/llama3.2:1b")
 
 os.environ["OLLAMA_BASE_URL"] = OLLAMA_BASE_URL
 os.environ["OLLAMA_API_KEY"] = OLLAMA_API_KEY
@@ -317,7 +317,16 @@ def _add_routes(app: FastAPI) -> None:
                 timestamp=datetime.now().isoformat(),
             )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+            error_msg = str(e)
+
+            # Check for RAM/Memory errors
+            if "memory" in error_msg.lower() or "available" in error_msg.lower():
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Model memory error: {error_msg}. Try a smaller model or check system RAM.",
+                )
+
+            raise HTTPException(status_code=500, detail=f"Agent error: {error_msg}")
 
 
 app = create_app_with_gateway()
