@@ -8,11 +8,17 @@ All business logic is delegated to src/upsonic/ modules:
 - src/upsonic/storage/ for data persistence
 - src/upsonic/safety_engine/ for content filtering
 
+Uses apps/gateway/ for security:
+- apps/gateway/auth.py for JWT/OAuth2 authentication
+- apps/gateway/ratelimit.py for rate limiting
+- apps/gateway/middleware.py for FastAPI middleware
+
 Design Principles:
 1. Minimal business logic in this layer
 2. All complexity delegated to src/upsonic/
-3. Adapter pattern for external communication
-4. Clean separation of concerns
+3. Security delegated to apps/gateway/
+4. Adapter pattern for external communication
+5. Clean separation of concerns
 """
 
 from __future__ import annotations
@@ -30,6 +36,8 @@ from pydantic import BaseModel, Field
 from upsonic import Agent, Task
 from upsonic.storage import SqliteStorage, Memory
 from upsonic.chat import Chat
+from apps.gateway.middleware import GatewayMiddleware
+from apps.gateway.config import GatewayConfig
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "api-key-not-set")
@@ -41,6 +49,7 @@ os.environ["OLLAMA_API_KEY"] = OLLAMA_API_KEY
 storage: Optional[SqliteStorage] = None
 agent_cache: dict[str, Agent] = {}
 chat_sessions: dict[str, Chat] = {}
+gateway_middleware: Optional[GatewayMiddleware] = None
 
 
 class QueryRequest(BaseModel):
@@ -73,6 +82,17 @@ class ModelsResponse(BaseModel):
     source: str
 
 
+class ToolInfo(BaseModel):
+    name: str
+    description: str
+    parameters: Optional[dict] = None
+
+
+class ToolsResponse(BaseModel):
+    tools: list[ToolInfo]
+    count: int
+
+
 events: dict = {}
 
 
@@ -95,14 +115,37 @@ async def get_ollama_models() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global storage, agent_cache, chat_sessions
+
     print("Starting Upsonic REST Interface Adapter...")
     print(f"Backend: {OLLAMA_BASE_URL}")
     print(f"Default Model: {DEFAULT_MODEL}")
+
     storage = SqliteStorage("interface_chat.db")
+
     events["started"] = True
     events["startup_time"] = datetime.now().isoformat()
+
     yield
+
     print("Shutting down Upsonic REST Interface Adapter...")
+
+
+def create_app_with_gateway() -> FastAPI:
+    """Create FastAPI app with gateway middleware."""
+    from apps.gateway.middleware import GatewayMiddleware
+
+    app = FastAPI(
+        title="Upsonic REST Interface Adapter",
+        description="HTTP adapter for Upsonic AI Agent Framework. "
+        "Delegates to src/upsonic/ enterprise modules.",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    gateway_middleware = GatewayMiddleware()
+    gateway_middleware.add_to_app(app)
+
+    return app
 
 
 def create_app() -> FastAPI:
@@ -154,6 +197,34 @@ def create_app() -> FastAPI:
         models = await get_ollama_models()
         return ModelsResponse(models=models, count=len(models), source="ollama")
 
+    @app.get("/tools", response_model=ToolsResponse)
+    async def get_tools():
+        """Get list of available tools."""
+        # Built-in tools list
+        tools = [
+            ToolInfo(
+                name="web_search",
+                description="Search the web for information",
+                parameters={"query": {"type": "string", "description": "Search query"}},
+            ),
+            ToolInfo(
+                name="code_execution",
+                description="Execute Python code safely",
+                parameters={
+                    "code": {"type": "string", "description": "Python code to execute"}
+                },
+            ),
+            ToolInfo(
+                name="memory",
+                description="Store and retrieve information from memory",
+                parameters={
+                    "action": {"type": "string", "enum": ["store", "retrieve"]},
+                    "content": {"type": "string"},
+                },
+            ),
+        ]
+        return ToolsResponse(tools=tools, count=len(tools))
+
     @app.post("/query", response_model=QueryResponse)
     async def process_query(request: QueryRequest) -> QueryResponse:
         if not request.user_query or not request.user_query.strip():
@@ -177,13 +248,16 @@ def create_app() -> FastAPI:
     return app
 
 
+app = create_app()
+
+
 def run():
     """Run the interface adapter with uvicorn."""
     import uvicorn
 
     uvicorn.run(
         "apps.interface.rest.main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,
         reload=True,
     )

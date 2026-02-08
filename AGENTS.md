@@ -177,3 +177,62 @@ src/upsonic/
 tests/
   unit_tests/    # Unit tests
 ```
+
+## Running the Project
+
+**IMPORTANT:** Always use `uv run` for all commands. Never use `python`, `streamlit`, or `uv run` with `PYTHONPATH=.` prefix.
+
+### Setup
+```bash
+# Sync dependencies (ALWAYS run this first)
+uv sync
+
+# Activate virtual environment (optional - uv run handles this automatically)
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # Linux/Mac
+```
+
+### API Server
+```bash
+# Run API Server on port 8000
+uv run uvicorn apps.interface.rest.main:app --reload --port 8000
+
+# Alternative (using factory pattern)
+uv run uvicorn apps.interface.rest.main:create_app --factory --reload --port 8000
+```
+
+### Streamlit Web UI
+```bash
+# Run Streamlit UI (opens at http://localhost:8501)
+uv run streamlit run apps/web/streamlit_app.py
+```
+
+### Web Client Demo
+```bash
+# Run web client demo
+uv run python -c "from apps.web.client import run; run()"
+```
+
+### Chat Client Demo
+```bash
+# Run chat client demo
+uv run python -c "from apps.web.chat_client import run_demo; run_demo()"
+```
+
+### Direct Python Usage
+```bash
+# Python API Client
+uv run python -c "
+from apps.web import UpsonicClient
+client = UpsonicClient()
+result = client.query('Hello!')
+print(result)
+"
+
+# Python Chat Client
+uv run python -c "
+from apps.web import ChatClient
+client = ChatClient()
+response = client.chat('Hello!', user_id='test')
+print(response)
+"
