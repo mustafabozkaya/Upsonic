@@ -18,23 +18,34 @@ from fastapi.responses import JSONResponse
 from apps.gateway.auth import AuthProvider, get_auth_provider
 from apps.gateway.ratelimit import RateLimiter, get_rate_limiter
 from apps.gateway.config import GatewayConfig
+from apps.gateway.safety import SafetyChecker, get_safety_checker
 
 
 class GatewayMiddleware:
-    """Gateway middleware combining auth and rate limiting."""
+    """Gateway middleware combining auth, rate limiting, and safety checks."""
 
     def __init__(
         self,
         auth_provider: Optional[AuthProvider] = None,
         rate_limiter: Optional[RateLimiter] = None,
+        safety_checker: Optional[SafetyChecker] = None,
         config: Optional[GatewayConfig] = None,
     ):
         self.auth_provider = auth_provider or get_auth_provider()
         self.rate_limiter = rate_limiter or get_rate_limiter()
         self.config = config or GatewayConfig()
+        self.safety_checker = safety_checker or get_safety_checker(
+            enabled_policies=self.config.safety_policies
+            if self.config.safety_enabled
+            else []
+        )
 
     async def authenticate(self, request: Request) -> tuple[bool, dict]:
         """Authenticate request and return (success, auth_context)."""
+        # Check if auth is required
+        if not getattr(self.config, "require_auth", False):
+            return True, {"user_id": "anonymous", "roles": []}
+
         credentials = {
             "Authorization": request.headers.get("Authorization", ""),
             "X-API-Key": request.headers.get("X-API-Key", ""),
@@ -79,15 +90,86 @@ class GatewayMiddleware:
             return "models"
         return "default"
 
+    def _should_skip_safety_check(self, path: str) -> bool:
+        """Determine if safety check should be skipped for this path."""
+        skip_paths = ["/health", "/docs", "/openapi.json", "/", "/models", "/tools"]
+        return any(path.startswith(skip) or path == skip for skip in skip_paths)
+
+    async def check_safety(self, request: Request) -> tuple[bool, Optional[dict]]:
+        """Check request content safety and return (is_safe, violation_info).
+
+        Only checks POST/PUT/PATCH requests with body content.
+        """
+        if not self.config.safety_enabled:
+            return True, None
+
+        if self._should_skip_safety_check(request.url.path):
+            return True, None
+
+        # Only check methods that typically have body content
+        if request.method not in ["POST", "PUT", "PATCH"]:
+            return True, None
+
+        try:
+            # Read and parse request body
+            body = await request.body()
+            if not body:
+                return True, None
+
+            import json
+
+            content = json.loads(body)
+
+            # Extract text fields to check
+            texts_to_check = []
+
+            # Check user_query field (primary)
+            if "user_query" in content and content["user_query"]:
+                texts_to_check.append(content["user_query"])
+
+            # Check message field (chat endpoint)
+            if "message" in content and content["message"]:
+                texts_to_check.append(content["message"])
+
+            # Check messages array (chat history)
+            if "messages" in content and isinstance(content["messages"], list):
+                for msg in content["messages"]:
+                    if isinstance(msg, dict) and msg.get("content"):
+                        texts_to_check.append(msg["content"])
+
+            if not texts_to_check:
+                return True, None
+
+            # Check each text
+            for text in texts_to_check:
+                result = self.safety_checker.check_content(text)
+                if not result.is_safe:
+                    return False, {
+                        "policy_triggered": result.policy_triggered,
+                        "reason": result.reason,
+                        "blocked": self.config.safety_block_on_violation,
+                    }
+
+            return True, None
+
+        except json.JSONDecodeError:
+            # Non-JSON body, skip safety check
+            return True, None
+        except Exception as e:
+            # Log error but allow request (fail open for safety system errors)
+            print(f"Safety check error: {e}")
+            return True, None
+
     async def process_request(
         self, request: Request
     ) -> tuple[Optional[Response], dict]:
-        """Process request through auth and rate limiting.
+        """Process request through auth, rate limiting, and safety checks.
 
         Returns (response, context). If response is not None, send it and stop processing.
         """
         auth_context = {}
 
+        # 1. Authentication
         auth_success, auth_result = await self.authenticate(request)
         if not auth_success:
             return JSONResponse(
@@ -97,6 +179,7 @@ class GatewayMiddleware:
 
         auth_context.update(auth_result)
 
+        # 2. Rate Limiting
         rate_success, rate_result = await self.check_rate_limit(request, auth_context)
         if not rate_success:
             headers = rate_result.get("headers", {})
@@ -111,6 +194,18 @@ class GatewayMiddleware:
 
         if "rate_limit" in rate_result:
             request.state.rate_limit_headers = rate_result["rate_limit"]
+
+        # 3. Safety Check (Content Filtering)
+        safety_success, safety_result = await self.check_safety(request)
+        if not safety_success and safety_result and safety_result.get("blocked"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Content violates safety policy",
+                    "policy": safety_result.get("policy_triggered"),
+                    "reason": safety_result.get("reason"),
+                },
+            ), auth_context
 
         return None, auth_context
 
@@ -156,11 +251,13 @@ class GatewayMiddleware:
 async def create_gateway_middleware(
     auth_provider: Optional[AuthProvider] = None,
     rate_limiter: Optional[RateLimiter] = None,
+    safety_checker: Optional[SafetyChecker] = None,
 ) -> GatewayMiddleware:
     """Factory function to create gateway middleware."""
     return GatewayMiddleware(
         auth_provider=auth_provider,
         rate_limiter=rate_limiter,
+        safety_checker=safety_checker,
     )
 
 

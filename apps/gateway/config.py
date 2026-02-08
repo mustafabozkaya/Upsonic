@@ -39,13 +39,28 @@ class GatewayConfig:
     log_level: str = "INFO"
     request_id_header: str = "X-Request-ID"
 
+    # Safety Engine Configuration
+    safety_enabled: bool = True
+    safety_policies: list[str] = None
+    safety_block_on_violation: bool = True
+
     def __post_init__(self):
         if self.cors_origins is None:
             self.cors_origins = ["*"]
+        if self.safety_policies is None:
+            self.safety_policies = ["profanity", "pii", "adult_content"]
 
     @classmethod
     def from_env(cls) -> "GatewayConfig":
         """Create configuration from environment variables."""
+        # Parse safety policies from env
+        safety_policies_env = os.environ.get(
+            "UPSONIC_SAFETY_POLICIES", "profanity,pii,adult_content"
+        )
+        safety_policies = [
+            p.strip() for p in safety_policies_env.split(",") if p.strip()
+        ]
+
         return cls(
             host=os.environ.get("UPSONIC_HOST", "0.0.0.0"),
             port=int(os.environ.get("UPSONIC_PORT", "8000")),
@@ -60,6 +75,13 @@ class GatewayConfig:
             use_redis=os.environ.get("UPSONIC_USE_REDIS", "false").lower() == "true",
             redis_url=os.environ.get("UPSONIC_REDIS_URL", "redis://localhost:6379/0"),
             log_level=os.environ.get("UPSONIC_LOG_LEVEL", "INFO"),
+            safety_enabled=os.environ.get("UPSONIC_SAFETY_ENABLED", "true").lower()
+            == "true",
+            safety_policies=safety_policies,
+            safety_block_on_violation=os.environ.get(
+                "UPSONIC_SAFETY_BLOCK", "true"
+            ).lower()
+            == "true",
         )
 
 

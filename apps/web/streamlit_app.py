@@ -147,11 +147,27 @@ def get_available_models() -> tuple[list[str], str]:
         return DEFAULT_MODELS.copy(), "default"
 
 
-def sync_query(user_query: str, model: str) -> tuple[bool, str]:
+def sync_query(
+    user_query: str, model: str, enable_guardrails: bool = True
+) -> tuple[bool, str]:
     """Send query to API."""
     try:
         client = get_client()
-        result = client.query(user_query, model=model)
+
+        # Check if guardrails should be enabled
+        guardrails = (
+            st.session_state.get("guardrails_enabled", True)
+            if "guardrails_enabled" in st.session_state
+            else enable_guardrails
+        )
+
+        # Send query with guardrails parameter
+        result = client.query(user_query, model=model, enable_guardrails=guardrails)
+
+        # Check if response is blocked
+        if result.bot_response.startswith("⚠️ Content blocked"):
+            return False, result.bot_response
+
         return True, result.bot_response
     except Exception as e:
         return False, str(e)
@@ -269,6 +285,66 @@ def render_sidebar():
             st.caption("Auto mode: Agent will decide")
 
         st.markdown("---")
+
+        # Safety Engine Settings (New Feature)
+        st.markdown("### 🛡️ Safety Engine")
+
+        # Fetch Safety Engine status
+        safety_enabled = False
+        safety_status = "inactive"
+        safety_policies = []
+
+        try:
+            client = get_client()
+            safety_response = client.get_safety_status()
+            safety_enabled = safety_response.get("enabled", False)
+            safety_status = safety_response.get("status", "inactive")
+            safety_policies = safety_response.get("policies", [])
+        except Exception as e:
+            st.warning(f"⚠️ Could not fetch safety status: {e}")
+
+        # Display Safety Engine status
+        status_color = "#d4edda" if safety_enabled else "#f8d7da"
+        status_text = "Aktif" if safety_status == "active" else "Pasif"
+
+        st.markdown(
+            f"""
+            <div style="padding: 1rem; border-radius: 8px; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <span style="font-size: 1.2rem;">🛡️</span>
+                    <strong>Safety Engine:</strong>
+                    <span style="padding: 0.25rem 0.75rem; border-radius: 4px; background: {status_color}; color: white; font-weight: bold;">
+                        {status_text}
+                    </span>
+                </div>
+                <div style="font-size: 0.9rem; color: #666;">
+                    <strong>Aktif Policy'ler:</strong>
+                    {", ".join(safety_policies) if safety_policies else "Yok"}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Guardrails toggle checkbox
+        guardrails_enabled = st.checkbox(
+            "🚦 Guardrails Aktif Et",
+            value=st.session_state.get("guardrails_enabled", True),
+            key="guardrails_enabled",
+            help="Safety Engine ile içerik kontrolünü aç/kapat. Pasif olduğunda tüm içerik kabul edilir.",
+        )
+
+        # Update session state
+        st.session_state.guardrails_enabled = guardrails_enabled
+
+        if guardrails_enabled:
+            st.caption("✅ İçerik güvenliği etkin (Profanity, PII, Adult Content)")
+            st.info("💡 Uyarı: Uygunsuz içerik otomatik olarak engellenecek.")
+        else:
+            st.caption("⚠️ İçerik güvenliği devre dışı")
+            st.warning("⚠️ Dikkat: Tüm içerik kontrolsiz işlenecek.")
+
+        st.markdown("---")
         st.markdown("### 💬 Chat Actions")
 
         if st.button("🗑️ Clear Chat", key="clear_chat"):
@@ -318,6 +394,9 @@ def handle_user_input(user_input: str, model: str, tools: list):
 
     timestamp = datetime.now().strftime("%H:%M")
 
+    # Get guardrails setting
+    guardrails_enabled = st.session_state.get("guardrails_enabled", True)
+
     # Add tools info to message if tools are selected
     tools_info = ""
     if tools:
@@ -341,8 +420,10 @@ def handle_user_input(user_input: str, model: str, tools: list):
 
     with st.chat_message("assistant"):
         with st.spinner("🤔 Thinking..."):
-            # For now, just pass query without tools (API needs update)
-            success, response = sync_query(user_input, model)
+            # Pass query with guardrails setting to sync_query
+            success, response = sync_query(
+                user_input, model, enable_guardrails=guardrails_enabled
+            )
 
             if success:
                 st.markdown(response)
@@ -354,11 +435,17 @@ def handle_user_input(user_input: str, model: str, tools: list):
                     }
                 )
             else:
-                st.error(f"❌ Error: {response}")
+                if response.startswith("⚠️ Content blocked"):
+                    # Blocked content - show warning
+                    st.warning(f"🛡️ {response}")
+                else:
+                    # Other error
+                    st.error(f"❌ Error: {response}")
+
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
-                        "content": f"Error: {response}",
+                        "content": response,
                         "timestamp": datetime.now().strftime("%H:%M"),
                     }
                 )
@@ -366,6 +453,9 @@ def handle_user_input(user_input: str, model: str, tools: list):
 
 def render_chat_input(selected_model: str, selected_tools: list):
     """Render chat input area."""
+    # Get guardrails setting from session state
+    guardrails_enabled = st.session_state.get("guardrails_enabled", True)
+
     if prompt := st.chat_input("Type your message...", key="chat_input"):
         handle_user_input(prompt, selected_model, selected_tools)
 

@@ -20,6 +20,13 @@ from .auth import AuthProvider, JWTAuthProvider, APIKeyAuthProvider
 from .ratelimit import RateLimiter, RedisRateLimiter
 from .middleware import GatewayMiddleware, create_gateway_middleware
 from .config import GatewayConfig, get_gateway_config
+from .safety import (
+    SafetyChecker,
+    SafetyCheckResult,
+    get_safety_checker,
+    check_safety,
+    is_safe,
+)
 
 __all__ = [
     "AuthProvider",
@@ -31,4 +38,9 @@ __all__ = [
     "create_gateway_middleware",
     "GatewayConfig",
     "get_gateway_config",
+    "SafetyChecker",
+    "SafetyCheckResult",
+    "get_safety_checker",
+    "check_safety",
+    "is_safe",
 ]

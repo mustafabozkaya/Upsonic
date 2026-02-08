@@ -38,6 +38,7 @@ from upsonic.storage import SqliteStorage, Memory
 from upsonic.chat import Chat
 from apps.gateway.middleware import GatewayMiddleware
 from apps.gateway.config import GatewayConfig
+from apps.gateway.safety import SafetyChecker, get_safety_checker, SafetyCheckResult
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "api-key-not-set")
@@ -50,6 +51,7 @@ storage: Optional[SqliteStorage] = None
 agent_cache: dict[str, Agent] = {}
 chat_sessions: dict[str, Chat] = {}
 gateway_middleware: Optional[GatewayMiddleware] = None
+safety_checker: Optional[SafetyChecker] = None
 
 
 class QueryRequest(BaseModel):
@@ -62,6 +64,10 @@ class QueryRequest(BaseModel):
     tools: Optional[list[str]] = Field(
         default=None,
         description="Optional list of tools to enable (web_search, code_execution, memory)",
+    )
+    enable_guardrails: Optional[bool] = Field(
+        default=True,
+        description="Enable safety engine guardrails (profanity, PII, adult content filtering)",
     )
 
 
@@ -97,6 +103,14 @@ class ToolsResponse(BaseModel):
     count: int
 
 
+class SafetyStatusResponse(BaseModel):
+    enabled: bool
+    policies: list[str]
+    block_on_violation: bool
+    status: str
+    version: str = "1.0.0"
+
+
 events: dict = {}
 
 
@@ -118,13 +132,21 @@ async def get_ollama_models() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global storage, agent_cache, chat_sessions
+    global storage, agent_cache, chat_sessions, safety_checker
 
     print("Starting Upsonic REST Interface Adapter...")
     print(f"Backend: {OLLAMA_BASE_URL}")
     print(f"Default Model: {DEFAULT_MODEL}")
 
     storage = SqliteStorage("interface_chat.db")
+
+    # Initialize Safety Engine
+    try:
+        safety_checker = get_safety_checker()
+        print("✅ Safety Engine initialized")
+    except Exception as e:
+        print(f"⚠️  Safety Engine initialization failed: {e}")
+        safety_checker = None
 
     events["started"] = True
     events["startup_time"] = datetime.now().isoformat()
@@ -135,7 +157,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app_with_gateway() -> FastAPI:
-    """Create FastAPI app with gateway middleware."""
+    """Create FastAPI app with gateway middleware and all routes."""
     from apps.gateway.middleware import GatewayMiddleware
 
     app = FastAPI(
@@ -148,6 +170,8 @@ def create_app_with_gateway() -> FastAPI:
 
     gateway_middleware = GatewayMiddleware()
     gateway_middleware.add_to_app(app)
+
+    _add_routes(app)
 
     return app
 
@@ -170,6 +194,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    _add_routes(app)
+
+    return app
+
+
+def _add_routes(app: FastAPI) -> None:
+    """Add all API routes to the FastAPI app."""
+
     @app.get("/", response_model=dict)
     async def root():
         return {
@@ -183,6 +215,8 @@ def create_app() -> FastAPI:
                 "docs": "/docs",
                 "health": "/health",
                 "models": "/models",
+                "tools": "/tools",
+                "safety": "/safety",
                 "query": "/query (POST)",
             },
         }
@@ -204,7 +238,6 @@ def create_app() -> FastAPI:
     @app.get("/tools", response_model=ToolsResponse)
     async def get_tools():
         """Get list of available tools."""
-        # Built-in tools list
         tools = [
             ToolInfo(
                 name="web_search",
@@ -229,6 +262,19 @@ def create_app() -> FastAPI:
         ]
         return ToolsResponse(tools=tools, count=len(tools))
 
+    @app.get("/safety", response_model=SafetyStatusResponse)
+    async def get_safety_status():
+        """Get Safety Engine status and configuration."""
+        config = GatewayConfig.from_env()
+        return SafetyStatusResponse(
+            enabled=config.safety_enabled,
+            policies=config.safety_policies,
+            block_on_violation=config.safety_block_on_violation,
+            status="active"
+            if safety_checker and safety_checker._policies_loaded
+            else "inactive",
+        )
+
     @app.post("/query", response_model=QueryResponse)
     async def process_query(request: QueryRequest) -> QueryResponse:
         if not request.user_query or not request.user_query.strip():
@@ -236,6 +282,17 @@ def create_app() -> FastAPI:
 
         try:
             model = request.model or DEFAULT_MODEL
+
+            # 1. Safety Engine Check (if enabled and safety_checker available)
+            if request.enable_guardrails and safety_checker:
+                safety_result = safety_checker.check_content(request.user_query)
+                if not safety_result.is_safe:
+                    return QueryResponse(
+                        user_query=request.user_query,
+                        bot_response=f"⚠️ Content blocked by safety policy: {safety_result.reason}",
+                        model_used=model,
+                        timestamp=datetime.now().isoformat(),
+                    )
 
             # Log tools if provided
             if request.tools:
@@ -262,10 +319,8 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
-    return app
 
-
-app = create_app()
+app = create_app_with_gateway()
 
 
 def run():

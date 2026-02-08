@@ -136,6 +136,7 @@ class UpsonicClient:
         self,
         user_query: str,
         model: Optional[str] = None,
+        enable_guardrails: Optional[bool] = None,
     ) -> QueryResult:
         """
         Send a query to the Upsonic AI Agent.
@@ -143,6 +144,7 @@ class UpsonicClient:
         Args:
             user_query: The question or prompt to send
             model: Optional model specification (e.g., "ollama/qwen2.5:7b")
+            enable_guardrails: Optional safety engine control (True/False)
 
         Returns:
             QueryResult with the response and metadata
@@ -157,6 +159,8 @@ class UpsonicClient:
         payload: Dict[str, Any] = {"user_query": user_query}
         if model:
             payload["model"] = model
+        if enable_guardrails is not None:
+            payload["enable_guardrails"] = enable_guardrails
 
         response = self.client.post(
             f"{self.base_url}/query",
@@ -214,6 +218,21 @@ class UpsonicClient:
         """
         response = self.client.get(
             f"{self.base_url}/",
+            headers=self.headers,
+        )
+
+        self._handle_error(response)
+        return response.json()
+
+    def get_safety_status(self) -> Dict[str, Any]:
+        """
+        Get Safety Engine status.
+
+        Returns:
+            Dictionary with safety status
+        """
+        response = self.client.get(
+            f"{self.base_url}/safety",
             headers=self.headers,
         )
 
@@ -309,6 +328,7 @@ class AsyncUpsonicClient:
         self,
         user_query: str,
         model: Optional[str] = None,
+        enable_guardrails: Optional[bool] = None,
     ) -> QueryResult:
         """
         Send a query to the Upsonic AI Agent (async).
@@ -316,6 +336,7 @@ class AsyncUpsonicClient:
         Args:
             user_query: The question or prompt to send
             model: Optional model specification
+            enable_guardrails: Optional safety engine control
 
         Returns:
             QueryResult with the response and metadata
@@ -326,6 +347,8 @@ class AsyncUpsonicClient:
         payload: Dict[str, Any] = {"user_query": user_query}
         if model:
             payload["model"] = model
+        if enable_guardrails is not None:
+            payload["enable_guardrails"] = enable_guardrails
 
         client = await self.client
         response = await client.post(
