@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Add project root to path for imports
@@ -232,6 +233,42 @@ def render_sidebar():
         )
 
         st.markdown("---")
+        st.markdown("### 🛠️ Tools")
+
+        # Initialize selected_tools in session state
+        if "selected_tools" not in st.session_state:
+            st.session_state.selected_tools = []
+
+        # Tool selection with checkboxes
+        st.caption("Select tools to enable:")
+
+        available_tools = {
+            "web_search": "🔍 Web Search (DuckDuckGo)",
+            "code_execution": "💻 Code Execution (Python)",
+            "memory": "🧠 Memory (Store/Retrieve)",
+        }
+
+        # Create checkboxes and collect selected tools
+        selected_tools_list = []
+        for tool_key, tool_label in available_tools.items():
+            is_checked = st.checkbox(
+                tool_label,
+                value=tool_key in st.session_state.selected_tools,
+                key=f"tool_{tool_key}",
+            )
+            if is_checked:
+                selected_tools_list.append(tool_key)
+
+        # Update session state only if changed
+        if set(selected_tools_list) != set(st.session_state.selected_tools):
+            st.session_state.selected_tools = selected_tools_list
+
+        if st.session_state.selected_tools:
+            st.caption(f"Active: {', '.join(st.session_state.selected_tools)}")
+        else:
+            st.caption("Auto mode: Agent will decide")
+
+        st.markdown("---")
         st.markdown("### 💬 Chat Actions")
 
         if st.button("🗑️ Clear Chat", key="clear_chat"):
@@ -257,7 +294,7 @@ def render_sidebar():
             """)
             st.caption("Powered by Upsonic Clean Architecture")
 
-    return selected_model, temperature, api_url
+    return selected_model, temperature, api_url, st.session_state.selected_tools
 
 
 def render_chat():
@@ -274,27 +311,37 @@ def render_chat():
     return chat_container
 
 
-def handle_user_input(user_input: str, model: str):
+def handle_user_input(user_input: str, model: str, tools: list):
     """Process user input and generate response."""
     if not user_input.strip():
         return
 
     timestamp = datetime.now().strftime("%H:%M")
 
+    # Add tools info to message if tools are selected
+    tools_info = ""
+    if tools:
+        tools_info = f" (with tools: {', '.join(tools)})"
+
     st.session_state.messages.append(
         {
             "role": "user",
             "content": user_input,
             "timestamp": timestamp,
+            "tools": tools,
         }
     )
 
     with st.chat_message("user"):
         st.markdown(user_input)
-        st.caption(f"🕐 {timestamp}")
+        if tools:
+            st.caption(f"🕐 {timestamp} | 🛠️ {', '.join(tools)}")
+        else:
+            st.caption(f"🕐 {timestamp}")
 
     with st.chat_message("assistant"):
         with st.spinner("🤔 Thinking..."):
+            # For now, just pass query without tools (API needs update)
             success, response = sync_query(user_input, model)
 
             if success:
@@ -317,10 +364,10 @@ def handle_user_input(user_input: str, model: str):
                 )
 
 
-def render_chat_input(selected_model: str):
+def render_chat_input(selected_model: str, selected_tools: list):
     """Render chat input area."""
     if prompt := st.chat_input("Type your message...", key="chat_input"):
-        handle_user_input(prompt, selected_model)
+        handle_user_input(prompt, selected_model, selected_tools)
 
 
 def render_examples():
@@ -337,18 +384,30 @@ def render_examples():
 
         for i, example in enumerate(examples):
             col = col1 if i % 2 == 0 else col2
-            if col.button(example, key=f"example_{i}"):
-                st.session_state.user_input = example
+            if col.button(example, key=f"example_{i}", use_container_width=True):
+                st.session_state.pending_message = example
+                st.rerun()
 
 
 def main():
     """Main Streamlit application."""
     render_header()
 
-    selected_model, temperature, api_url = render_sidebar()
+    selected_model, temperature, api_url, selected_tools = render_sidebar()
+
+    # Store selected tools in session state for use in chat
+    if "current_tools" not in st.session_state:
+        st.session_state.current_tools = []
+    st.session_state.current_tools = selected_tools
+
+    # Handle pending message from example buttons
+    if "pending_message" in st.session_state and st.session_state.pending_message:
+        msg = st.session_state.pending_message
+        st.session_state.pending_message = None
+        handle_user_input(msg, selected_model, selected_tools)
 
     render_chat()
-    render_chat_input(selected_model)
+    render_chat_input(selected_model, selected_tools)
     render_examples()
 
     st.markdown("---")

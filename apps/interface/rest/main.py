@@ -59,6 +59,10 @@ class QueryRequest(BaseModel):
     model: Optional[str] = Field(
         default=DEFAULT_MODEL, description="Ollama model to use"
     )
+    tools: Optional[list[str]] = Field(
+        default=None,
+        description="Optional list of tools to enable (web_search, code_execution, memory)",
+    )
 
 
 class QueryResponse(BaseModel):
@@ -232,8 +236,21 @@ def create_app() -> FastAPI:
 
         try:
             model = request.model or DEFAULT_MODEL
+
+            # Log tools if provided
+            if request.tools:
+                print(f"Tools enabled: {request.tools}")
+
+            # TODO: Configure agent with tools when Upsonic supports it
             agent = Agent(model=model)
-            task = Task(f"Answer clearly and concisely: {request.user_query}")
+
+            # Add tools context to prompt if tools are specified
+            query = request.user_query
+            if request.tools:
+                tools_str = ", ".join(request.tools)
+                query = f"[Tools available: {tools_str}] {query}"
+
+            task = Task(f"Answer clearly and concisely: {query}")
             result = await agent.do_async(task)
 
             return QueryResponse(
