@@ -375,13 +375,20 @@ def render_sidebar():
 
 
 def render_chat():
-    """Render the main chat interface."""
+    """Render the main chat interface with all messages from session state."""
     chat_container = st.container()
 
     with chat_container:
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                content = message.get("content", "")
+
+                # Check if it's a blocked content message
+                if content.startswith("⚠️ Content blocked"):
+                    st.warning(f"🛡️ {content}")
+                else:
+                    st.markdown(content)
+
                 if "timestamp" in message:
                     st.caption(f"🕐 {message['timestamp']}")
 
@@ -389,7 +396,11 @@ def render_chat():
 
 
 def handle_user_input(user_input: str, model: str, tools: list):
-    """Process user input and generate response."""
+    """Process user input and generate response.
+
+    NOTE: Messages are stored in session_state and rendered by render_chat().
+    This function only makes the API call and stores results.
+    """
     if not user_input.strip():
         return
 
@@ -398,58 +409,46 @@ def handle_user_input(user_input: str, model: str, tools: list):
     # Get guardrails setting
     guardrails_enabled = st.session_state.get("guardrails_enabled", True)
 
-    # Add tools info to message if tools are selected
-    tools_info = ""
-    if tools:
-        tools_info = f" (with tools: {', '.join(tools)})"
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": user_input,
-            "timestamp": timestamp,
-            "tools": tools,
-        }
+    # Only add message if not already added (prevent duplicates on rerun)
+    messages = st.session_state.get("messages", [])
+    already_exists = any(
+        msg.get("content") == user_input and msg.get("role") == "user"
+        for msg in messages
     )
 
-    with st.chat_message("user"):
-        st.markdown(user_input)
-        if tools:
-            st.caption(f"🕐 {timestamp} | 🛠️ {', '.join(tools)}")
-        else:
-            st.caption(f"🕐 {timestamp}")
+    if not already_exists:
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": user_input,
+                "timestamp": timestamp,
+                "tools": tools,
+            }
+        )
 
-    with st.chat_message("assistant"):
-        with st.spinner("🤔 Thinking..."):
-            # Pass query with guardrails setting to sync_query
-            success, response = sync_query(
-                user_input, model, enable_guardrails=guardrails_enabled
-            )
+    # Make API call - don't display here, render_chat() will display all messages
+    with st.spinner("🤔 Thinking..."):
+        success, response = sync_query(
+            user_input, model, enable_guardrails=guardrails_enabled
+        )
 
-            if success:
-                st.markdown(response)
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": response,
-                        "timestamp": datetime.now().strftime("%H:%M"),
-                    }
-                )
-            else:
-                if response.startswith("⚠️ Content blocked"):
-                    # Blocked content - show warning
-                    st.warning(f"🛡️ {response}")
-                else:
-                    # Other error
-                    st.error(f"❌ Error: {response}")
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": response,
-                        "timestamp": datetime.now().strftime("%H:%M"),
-                    }
-                )
+    # Store response in session_state for render_chat() to display
+    if success:
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": response,
+                "timestamp": datetime.now().strftime("%H:%M"),
+            }
+        )
+    else:
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": response,
+                "timestamp": datetime.now().strftime("%H:%M"),
+            }
+        )
 
 
 def render_chat_input(selected_model: str, selected_tools: list):
