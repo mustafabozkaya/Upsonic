@@ -1,0 +1,90 @@
+{
+    "agent_name": "Upsonic AI Agent API + Client",
+    "description": "Client-Server AI Agent architecture with FastAPI backend and Streamlit frontend",
+    "icon": "robot",
+    "language": "en",
+    "streamlit": true,
+    "proxy_agent": false,
+    "architecture": {
+        "type": "client-server",
+        "backend": {
+            "framework": "FastAPI",
+            "file": "apps/api/main.py",
+            "port": 8000,
+            "features": [
+                "RESTful API",
+                "Multi-model support",
+                "CORS enabled",
+                "Health check endpoint"
+            ]
+        },
+        "frontend": {
+            "framework": "Streamlit",
+            "file": "apps/web/streamlit_app.py",
+            "type": "api-client",
+            "features": [
+                "HTTP client to backend",
+                "Real-time chat interface",
+                "Model selection",
+                "Connection health monitoring"
+            ]
+        }
+    },
+    "entrypoints": {
+        "api_file": "apps/api/main.py",
+        "streamlit_file": "apps/web/streamlit_app.py",
+        "api_startup_script": "scripts/run_api.sh",
+        "streamlit_startup_script": "scripts/run_streamlit.sh"
+    },
+    "input_schema": {
+        "inputs": {
+            "user_query": {
+                "type": "string",
+                "description": "User's question for the AI agent",
+                "required": true,
+                "default": null
+            },
+            "model": {
+                "type": "string",
+                "description": "Ollama model to use (e.g., 'ollama/llama3.2:3b')",
+                "required": false,
+                "default": "ollama/qwen2.5:7b"
+            }
+        }
+    },
+    "output_schema": {
+        "bot_response": {
+            "type": "string",
+            "description": "AI agent's generated response"
+        },
+        "user_query": {
+            "type": "string",
+            "description": "Original user query"
+        },
+        "model_used": {
+            "type": "string",
+            "description": "Model that was used for processing"
+        },
+        "timestamp": {
+            "type": "string",
+            "description": "ISO timestamp of the response"
+        }
+    },
+    "environment_variables": {
+        "UPSONIC_API_URL": {
+            "description": "URL of the FastAPI backend",
+            "default": "http://localhost:8000",
+            "required": false
+        },
+        "OLLAMA_BASE_URL": {
+            "description": "Ollama server URL",
+            "default": "http://localhost:11434/v1",
+            "required": true
+        },
+        "OLLAMA_API_KEY": {
+            "description": "Ollama API key",
+            "default": "api-key-not-set",
+            "required": false
+        }
+    }
+}
