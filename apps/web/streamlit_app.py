@@ -56,6 +56,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "available_models" not in st.session_state:
     st.session_state.available_models = DEFAULT_MODELS
+if "guardrails_enabled" not in st.session_state:
+    st.session_state.guardrails_enabled = True  # Initialize before widgets!
 
 
 st.markdown(
@@ -331,11 +333,10 @@ def render_sidebar():
             "🚦 Guardrails Aktif Et",
             value=st.session_state.get("guardrails_enabled", True),
             key="guardrails_enabled",
-            help="Safety Engine ile içerik kontrolünü aç/kapat. Pasif olduğunda tüm içerik kabul edilir.",
+            help="Safety Engine ile içerik kontrolünü aç/kapat.",
         )
 
-        # Update session state
-        st.session_state.guardrails_enabled = guardrails_enabled
+        # Widget with key manages its own session state - no manual assignment needed!
 
         if guardrails_enabled:
             st.caption("✅ İçerik güvenliği etkin (Profanity, PII, Adult Content)")
