@@ -1,0 +1,120 @@
+version: '3.8'
+
+# NOT: Ollama host makinede çalışıyor (port 11434)
+# Docker container'ları host.docker.internal üzerinden erişir
+
+services:
+  # ==================== GATEWAY API (Port 8000) ====================
+  gateway-api:
+    build:
+      context: ..
+      dockerfile: docker/gateway.Dockerfile
+    container_name: upsonic-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - UPSONIC_API_KEY=dev-key-change-in-production
+      # Host makinedeki Ollama'ya erişim
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      - UPSONIC_DB_URL=sqlite:///app/data/chat_sessions.db
+    volumes:
+      - gateway_data:/app/data
+    # Host makineye erişim için
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - upsonic_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==================== SIMPLE API (Port 8001) ====================
+  simple-api:
+    build:
+      context: ..
+      dockerfile: docker/simple-api.Dockerfile
+    container_name: upsonic-simple-api
+    ports:
+      - "8001:8001"
+    environment:
+      # Host makinedeki Ollama'ya erişim
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+    # Host makineye erişim için
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - upsonic_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==================== STREAMLIT SIMPLE CLIENT (Port 8501) ====================
+  streamlit-simple:
+    build:
+      context: ..
+      dockerfile: docker/streamlit-simple.Dockerfile
+    container_name: upsonic-streamlit-simple
+    ports:
+      - "8501:8501"
+    environment:
+      - UPSONIC_API_URL=http://simple-api:8001
+      # Host makinedeki Ollama'ya erişim (API'den model listesi çekmek için)
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+    depends_on:
+      simple-api:
+        condition: service_healthy
+    # Host makineye erişim için
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - upsonic_network
+    restart: unless-stopped
+
+  # ==================== STREAMLIT GATEWAY CLIENT (Port 8502) ====================
+  streamlit-gateway:
+    build:
+      context: ..
+      dockerfile: docker/streamlit-gateway.Dockerfile
+    container_name: upsonic-streamlit-gateway
+    ports:
+      - "8502:8502"
+    environment:
+      - UPSONIC_API_URL=http://gateway-api:8000
+      - UPSONIC_API_KEY=dev-key-change-in-production
+    depends_on:
+      gateway-api:
+        condition: service_healthy
+    networks:
+      - upsonic_network
+    restart: unless-stopped
+
+  # ==================== REDIS (Cache & Session Store) ====================
+  redis:
+    image: redis:7-alpine
+    container_name: upsonic-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - upsonic_network
+    restart: unless-stopped
+
+volumes:
+  gateway_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  upsonic_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
